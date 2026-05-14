@@ -1,14 +1,14 @@
 import SwiftUI
 
 struct LedgerShip: Identifiable, Codable {
-    var id = UUID()
+    var id: String { name }
     let name: String
     let level: Int
     let shipType: String
 }
 
 struct LedgerItem: Identifiable, Codable {
-    var id = UUID()
+    var id: String { name }
     let name: String
     let category: String
     let improvement: Int
@@ -28,12 +28,43 @@ struct MainView: View {
         )
     ]
     
-    let ships: [LedgerShip] = [
+    @State private var ships: [LedgerShip] = [
         LedgerShip(name: "赤城改二", level: 99, shipType: "正規空母"),
         LedgerShip(name: "時雨改三", level: 88, shipType: "駆逐艦"),
         LedgerShip(name: "北上改二", level: 95, shipType: "軽巡洋艦")
     ]
 
+    func loadShips() {
+
+        guard let url = Bundle.main.url(
+            forResource: "ships",
+            withExtension: "json"
+        ) else {
+            print("ships.json not found")
+            ships = [
+                LedgerShip(name: "JSONが見つかりません", level: 0, shipType: "エラー")
+            ]
+            return
+        }
+
+        do {
+            let data = try Data(contentsOf: url)
+
+            let decoded = try JSONDecoder().decode(
+                [LedgerShip].self,
+                from: data
+            )
+
+            ships = decoded
+
+        } catch {
+            print(error)
+            ships = [
+                LedgerShip(name: "JSON読込エラー", level: 0, shipType: "\(error)")
+            ]
+        }
+    }
+    
     var body: some View {
         TabView {
             NavigationStack {
@@ -83,6 +114,9 @@ struct MainView: View {
             .tabItem {
                 Label("資材", systemImage: "tray.full")
             }
+        }
+        .onAppear {
+            loadShips()
         }
     }
 }
