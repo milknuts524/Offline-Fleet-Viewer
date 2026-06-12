@@ -206,10 +206,34 @@ struct MainView: View {
         ) { result in
             do {
                 let url = try result.get()
+
+                let access = url.startAccessingSecurityScopedResource()
+                defer {
+                    if access {
+                        url.stopAccessingSecurityScopedResource()
+                    }
+                }
+
                 let data = try Data(contentsOf: url)
-                ships = try JSONDecoder().decode([LedgerShip].self, from: data)
-            } catch {
+
+                ships = try JSONDecoder().decode(
+                    [LedgerShip].self,
+                    from: data
+                )
+
+                print("ships loaded: \(ships.count)")
+            }
+            catch {
                 print(error)
+
+                ships = [
+                    LedgerShip(
+                        name: "読込エラー",
+                        level: 0,
+                        shipType: error.localizedDescription,
+                        sortNumber: 0
+                    )
+                ]
             }
         }
     }
