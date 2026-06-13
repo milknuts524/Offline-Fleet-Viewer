@@ -43,6 +43,14 @@ enum ShipSortMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+enum ShowingImporterType {
+    case ship
+    case item
+    case material
+    case useitem
+    case payitem
+}
+
 struct MainView: View {
     let shipTypeOrder: [String: Int] = [
         "戦艦": 10,
@@ -75,11 +83,14 @@ struct MainView: View {
     @State private var itemSearchText = ""
     @State private var shipSortMode: ShipSortMode = .level
     @State private var sectionByShipType = true
-    @State private var showingShipImporter = false
+    @State private var isShowingImporter = false
+    @State private var showingImporterType: ShowingImporterType?
 
     @State private var collapsedShipTypes: Set<String> = []
     @State private var collapsedItemCategories: Set<String> = []
     @State private var collapsedItemNames: Set<String> = []
+    
+    @State private var initializedCollapse = false
 
     var filteredShips: [LedgerShip] {
         let searched: [LedgerShip]
@@ -167,173 +178,146 @@ struct MainView: View {
                 shipSortMode: $shipSortMode,
                 sectionByShipType: $sectionByShipType,
                 searchText: $shipSearchText,
-                showingImporter: $showingShipImporter,
+                requestImport: {
+                    showingImporterType = .ship
+                    isShowingImporter = true
+                },
                 collapsedTypes: $collapsedShipTypes
             )
             .tabItem {
                 Label("艦娘", systemImage: "person.3")
             }
-
+            
             ItemListView(
                 groupedItems: groupedItems,
                 searchText: $itemSearchText,
+                requestImport: {
+                    showingImporterType = .item
+                    isShowingImporter = true
+                },
                 collapsedCategories: $collapsedItemCategories,
                 collapsedItemNames: $collapsedItemNames
             )
             .tabItem {
                 Label("装備", systemImage: "shippingbox")
             }
-
+            
             MaterialListView(
                 materials: materials,
                 useitems: useitems,
-                payitems: payitems
-            )
-                .tabItem {
-                    Label("資材", systemImage: "tray.full")
+                payitems: payitems,
+                requestMaterialImport: {
+                    showingImporterType = .material
+                    isShowingImporter = true
+                },
+                requestUseItemImport: {
+                    showingImporterType = .useitem
+                    isShowingImporter = true
+                },
+                requestPayItemImport: {
+                    showingImporterType = .payitem
+                    isShowingImporter = true
                 }
-        }
-        .onAppear {
-            loadShips()
-            loadItems()
-            loadMaterials()
-            loadUseItems()
-            loadPayItems()
+            )
+            .tabItem {
+                Label("資材", systemImage: "tray.full")
+            }
         }
         .fileImporter(
-            isPresented: $showingShipImporter,
+            isPresented: $isShowingImporter,
             allowedContentTypes: [.json]
         ) { result in
+            guard let importerType = showingImporterType else {
+                return
+            }
+            
+            defer {
+                showingImporterType = nil
+            }
+            
             do {
                 let url = try result.get()
-
-                let access = url.startAccessingSecurityScopedResource()
-                defer {
-                    if access {
-                        url.stopAccessingSecurityScopedResource()
+                
+                switch importerType {
+                case .ship:
+                    guard url.lastPathComponent == "ships.json" else {
+                        print("ships.jsonを選択してください")
+                        return
                     }
+                    
+                    ships = try loadJSON([LedgerShip].self, from: url)
+                    collapsedShipTypes = Set(ships.map(\.shipType))
+                    print("ships loaded: \(ships.count)")
+                    
+                case .item:
+                    guard url.lastPathComponent == "items.json" else {
+                        print("items.jsonを選択してください")
+                        return
+                    }
+                    
+                    items = try loadItems(from: url)
+                    collapsedItemCategories = Set(items.map(\.category))
+                    print("items loaded: \(items.count)")
+                    
+                case .material:
+                    guard url.lastPathComponent == "materials.json" else {
+                        print("materials.jsonを選択してください")
+                        return
+                    }
+                    
+                    materials = try loadMaterials(from: url)
+                    print("materials loaded: \(materials.count)")
+                    
+                case .useitem:
+                    guard url.lastPathComponent == "useitems.json" else {
+                        print("useitems.jsonを選択してください")
+                        return
+                    }
+                    
+                    useitems = try loadUseItems(from: url)
+                    print("useitems loaded: \(useitems.count)")
+                    
+                case .payitem:
+                    guard url.lastPathComponent == "payitems.json" else {
+                        print("payitems.jsonを選択してください")
+                        return
+                    }
+                    
+                    payitems = try loadPayItems(from: url)
+                    print("payitems loaded: \(payitems.count)")
                 }
-
-                let data = try Data(contentsOf: url)
-
-                ships = try JSONDecoder().decode(
-                    [LedgerShip].self,
-                    from: data
-                )
-
-                print("ships loaded: \(ships.count)")
-            }
-            catch {
+            } catch {
                 print(error)
-
-                ships = [
-                    LedgerShip(
-                        name: "読込エラー",
-                        level: 0,
-                        shipType: error.localizedDescription,
-                        sortNumber: 0
-                    )
-                ]
             }
         }
     }
 
-    func loadShips() {
-        guard let url = Bundle.main.url(forResource: "ships", withExtension: "json") else {
-            ships = [
-                LedgerShip(
-                    name: "ships.jsonが見つかりません",
-                    level: 0,
-                    shipType: "エラー",
-                    sortNumber: 0
-                )
-            ]
-            return
-        }
-
-        do {
-            let data = try Data(contentsOf: url)
-            ships = try JSONDecoder().decode([LedgerShip].self, from: data)
-        } catch {
-            ships = [
-                LedgerShip(
-                    name: "ships.json読込エラー",
-                    level: 0,
-                    shipType: "\(error)",
-                    sortNumber: 0
-                )
-            ]
-        }
+    func loadItems(from url: URL) throws -> [LedgerItem] {
+        try loadJSON([LedgerItem].self, from: url)
     }
 
-    func loadItems() {
-        guard let url = Bundle.main.url(forResource: "items", withExtension: "json") else {
-            items = [
-                LedgerItem(
-                    name: "items.jsonが見つかりません",
-                    category: "エラー",
-                    improvement: 0,
-                    typeOrder: 999
-                )
-            ]
-            return
-        }
-
-        do {
-            let data = try Data(contentsOf: url)
-            items = try JSONDecoder().decode([LedgerItem].self, from: data)
-        } catch {
-            items = [
-                LedgerItem(
-                    name: "items.json読込エラー",
-                    category: "\(error)",
-                    improvement: 0,
-                    typeOrder: 999
-                )
-            ]
-        }
+    func loadMaterials(from url: URL) throws -> [LedgerMaterial] {
+        try loadJSON([LedgerMaterial].self, from: url)
     }
 
-    func loadMaterials() {
-        guard let url = Bundle.main.url(forResource: "materials", withExtension: "json") else {
-            materials = [LedgerMaterial(name: "materials.jsonが見つかりません", amount: 0)]
-            return
-        }
-
-        do {
-            let data = try Data(contentsOf: url)
-            materials = try JSONDecoder().decode([LedgerMaterial].self, from: data)
-        } catch {
-            materials = [LedgerMaterial(name: "materials.json読込エラー", amount: 0)]
-        }
-    }
-    
-    func loadUseItems() {
-        guard let url = Bundle.main.url(forResource: "useitems", withExtension: "json") else {
-            useitems = []
-            return
-        }
-
-        do {
-            let data = try Data(contentsOf: url)
-            useitems = try JSONDecoder().decode([LedgerUseItem].self, from: data)
-        } catch {
-            print(error)
-        }
+    func loadUseItems(from url: URL) throws -> [LedgerUseItem] {
+        try loadJSON([LedgerUseItem].self, from: url)
     }
 
-    func loadPayItems() {
-        guard let url = Bundle.main.url(forResource: "payitems", withExtension: "json") else {
-            payitems = []
-            return
+    func loadPayItems(from url: URL) throws -> [LedgerPayItem] {
+        try loadJSON([LedgerPayItem].self, from: url)
+    }
+
+    func loadJSON<T: Decodable>(_ type: T.Type, from url: URL) throws -> T {
+        let access = url.startAccessingSecurityScopedResource()
+        defer {
+            if access {
+                url.stopAccessingSecurityScopedResource()
+            }
         }
 
-        do {
-            let data = try Data(contentsOf: url)
-            payitems = try JSONDecoder().decode([LedgerPayItem].self, from: data)
-        } catch {
-            print(error)
-        }
+        let data = try Data(contentsOf: url)
+        return try JSONDecoder().decode(type, from: data)
     }
 }
 
@@ -344,7 +328,7 @@ struct ShipListView: View {
     @Binding var shipSortMode: ShipSortMode
     @Binding var sectionByShipType: Bool
     @Binding var searchText: String
-    @Binding var showingImporter: Bool
+    let requestImport: () -> Void
     @Binding var collapsedTypes: Set<String>
 
     var body: some View {
@@ -403,8 +387,10 @@ struct ShipListView: View {
             .navigationTitle("艦娘")
             .searchable(text: $searchText, prompt: "艦名・艦種で検索")
             .toolbar {
-                Button("読込") {
-                    showingImporter = true
+                Menu("読込") {
+                    Button("ships.json") {
+                        requestImport()
+                    }
                 }
             }
         }
@@ -431,6 +417,7 @@ struct ItemListView: View {
     let groupedItems: [(category: String, items: [LedgerItem])]
 
     @Binding var searchText: String
+    let requestImport: () -> Void
     @Binding var collapsedCategories: Set<String>
     @Binding var collapsedItemNames: Set<String>
 
@@ -473,6 +460,13 @@ struct ItemListView: View {
             }
             .navigationTitle("装備")
             .searchable(text: $searchText, prompt: "装備名・カテゴリで検索")
+            .toolbar {
+                Menu("読込") {
+                    Button("items.json") {
+                        requestImport()
+                    }
+                }
+            }
         }
     }
 
@@ -547,6 +541,9 @@ struct MaterialListView: View {
     let materials: [LedgerMaterial]
     let useitems: [LedgerUseItem]
     let payitems: [LedgerPayItem]
+    let requestMaterialImport: () -> Void
+    let requestUseItemImport: () -> Void
+    let requestPayItemImport: () -> Void
 
     var body: some View {
         NavigationStack {
@@ -585,6 +582,21 @@ struct MaterialListView: View {
                 }
             }
             .navigationTitle("資材・道具")
+            .toolbar {
+                Menu("読込") {
+                    Button("materials.json") {
+                        requestMaterialImport()
+                    }
+
+                    Button("useitems.json") {
+                        requestUseItemImport()
+                    }
+
+                    Button("payitems.json") {
+                        requestPayItemImport()
+                    }
+                }
+            }
         }
     }
 }
